@@ -494,6 +494,10 @@ public final class CharacterBehaviorController {
             if case .sleep = state {
                 wakeUp(characterNode: characterNode)
             }
+        } else if TypingActivityMonitor.shared.currentWPM >= TypingActivityMonitor.cheerThreshold {
+            // 타이핑 중이면 유휴로 보지 않는다: 키보드로 열심히 코딩하는데
+            // 마우스가 가만하다고 45초마다 낮잠에 빠지면 응원이 끊긴다.
+            userIdleTime = 0
         } else {
             userIdleTime += dt
         }
@@ -620,14 +624,21 @@ public final class CharacterBehaviorController {
 
 
         // 4.5. Typing WPM Check & Cheering Mode
+        // 잠들어 있을 때 타이핑이 감지되면 깨우고 응원으로 이어진다.
+        // 낮잠이 45초 무입력 타이머 기반이라, 타이핑 중인데 낮잠에 빠지면
+        // 마우스 움직임 없이는 영영 못 깨어나 응원 조건식에도 못 닿는다.
         let currentWpm = TypingActivityMonitor.shared.currentWPM
-        if currentWpm >= 35.0 && !isClimbing && !isTNTActive {
+        if currentWpm >= TypingActivityMonitor.cheerThreshold && !isClimbing && !isTNTActive {
+            wakeUpIfSleeping(characterNode: characterNode, withEmoji: "🎉 코딩 중이네!")
+        }
+        let wokeWpm = TypingActivityMonitor.shared.currentWPM
+        if wokeWpm >= TypingActivityMonitor.cheerThreshold && !isClimbing && !isTNTActive {
             switch state {
             case .idle, .walk, .sit, .lookAround, .wave:
                 characterNode.isCheering = true
                 characterNode.showOverheadEmoji("🔥", duration: 1.5)
                 SoundAndEffectsManager.shared.play(.heart)
-                state = .cheer(wpm: currentWpm, timeLeft: 2.2, cheerCooldown: 0)
+                state = .cheer(wpm: wokeWpm, timeLeft: 2.2, cheerCooldown: 0)
             case .cheer(_, _, var cooldown):
                 characterNode.isCheering = true
                 cooldown -= dt
@@ -636,7 +647,7 @@ public final class CharacterBehaviorController {
                     let cheerEmojis = ["🔥", "⚡", "👏", "🎉", "💯"]
                     characterNode.showOverheadEmoji(cheerEmojis.randomElement() ?? "🔥", duration: 1.2)
                 }
-                state = .cheer(wpm: currentWpm, timeLeft: 2.2, cheerCooldown: cooldown)
+                state = .cheer(wpm: wokeWpm, timeLeft: 2.2, cheerCooldown: cooldown)
             default:
                 break
             }

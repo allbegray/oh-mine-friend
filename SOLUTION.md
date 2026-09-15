@@ -22,10 +22,66 @@ error: external macro implementation type 'SwiftUIMacros.StateMacro' could not b
    fi
    ```
    (`sudo xcode-select` 없이 동작. CI는 기본 Xcode를 쓰므로 영향 없음)
-
+2. `scripts/build_app.sh`의 swiftc Fallback도 풀 Xcode를 강제한다(2026-09-15):
+   - Fallback이 CLT `swiftc`로 돌면 1차 `swift build` 실패와 동일한 `SwiftUIMacros not found` + 연쇄 `self is immutable`이 그대로 재발한다.
+     (`@State` 해석 실패 시 `_characterScale`·`$selectedTab` 등이 생성되지 않아 구조체 mutating 에러로 번진다.)
+   - `libSwiftUIMacros.dylib`는 `Toolchains/.../host/plugins`가 아니라
+     `Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins`에 있으므로 Fallback의 `-plugin-path`를 그쪽으로 지정한다(둘 다 전달).
 ### 재발 방지
 - `.build`를 함부로 지우지 않는다. 지워야 하면 위 가드(또는 풀 Xcode) 상태에서 전체 빌드가 통과하는지 먼저 확인한다.
 - SwiftUI 매크로를 쓰는 파일 추가 시 로컬 CLT 빌드 가능 여부를 확인한다.
+- Fallback 경로를 고칠 때는 `Platforms/.../host/plugins` 실존 여부로 검증한다. `Toolchains/.../host/plugins`만 넘기면 고쳐지지 않는다.
+
+---
+
+## [타이핑 응원(Cheer)이 아무리 쳐도 동작하지 않음]
+
+### 증상
+`⌨️ 타이핑 응원 모드`가 ON인데 키보드를 아무리 쳐도 응원 모션이 안 뜸.
+
+### 원인
+**권한 기반 전역 키 감지가 이 앱 구조에서 구조적으로 죽는다.** 1차 수정(권한 요청 UI 추가)까지는
+증상을 못 고쳤다 — 재제보 후 실측으로 원인을 다시 잡았다.
+1. **권한이 실제로 없었다**: 실행 중인 앱의 상태 메뉴를 접근성 API 로 읽으니 `⚠️ 타 앱 타이핑 감지
+   허용하기 (클릭)` 항목이 떠 있었다 = `AXIsProcessTrusted() == false`. 권한 없는
+   `NSEvent.addGlobalMonitorForEvents(.keyDown)` 은 **에러도 크래시도 없이 아무 이벤트도 오지 않아**
+   WPM 이 영원히 0 이 된다. (재현: 실제 세션에 합성 키 40타를 흘려보내며 카운터가 100725→100765 로
+   오르는 동안 캐릭터는 "Dock에 걸터앉아 쉬는 중" 그대로였다.)
+2. **권한을 받아도 이 앱에서는 다음 빌드에 다시 죽는다**: 배포본은 Developer ID 없이 ad-hoc 서명이라,
+   TCC 가 권한을 **코드 서명(cdhash)** 에 묶는다. 재빌드마다 서명이 바뀌어 부여가 무효화되고,
+   macOS 는 다시 묻지도 않는다 → 조용히 미동작으로 회귀한다.
+3. 최신 macOS 는 전역 키 이벤트에 **입력 모니터링(Input Monitoring)** 까지 요구할 수 있어, 손쉬운
+   사용만 켜서는 여전히 안 들어오는 조합이 존재한다.
+
+### 해결
+**권한이 필요 없는 시스템 전역 키 카운터로 감지를 갈아엎었다.**
+`CGEventSource.counterForEventType(.combinedSessionState, .keyDown)` 은 세션 전역 keyDown 누적
+개수를 권한 없이 읽을 수 있고, 어느 앱에 타이핑해도 같은 값이 오른다(실측: 합성 40타 → 정확히 +40,
+frontmost 앱과 무관).
+- `TypingActivityMonitor`: 전역/로컬 `NSEvent` 모니터와 권한 요청 API 를 **삭제**하고 `poll(now:)` 로
+  교체. 게임 루프(`gameLoopTick`)가 프레임마다 정확히 한 번 호출해 증가분을 4초 슬라이딩 윈도우에
+  적립하고, `WPM = 윈도우 타수 × (60/4) ÷ 5` 로 환산한다.
+- 폭주 방어: **첫 호출은 기준선만** 기록(과거 누적치가 타수로 잡히지 않게), 프레임당 증가분을 32타로
+  클램프(절전 복귀·카운터 리셋 스파이크), `&-` 래핑 감산(UInt32 오버플로), 꺼져 있을 때도 기준선은
+  계속 갱신(다시 켤 때 과거분이 몰리지 않게).
+- 메뉴의 권한 안내 줄을 **실시간 상태 줄**로 교체: `⌨️ 지금 n WPM 감지 중 (35 WPM 이상이면 응원)` /
+  `⌨️ 타이핑 대기 중`(메뉴를 열 때마다 `menuNeedsUpdate` 가 갱신). 감지가 살아 있는지 눈으로 확인 가능.
+- 임계값은 `TypingActivityMonitor.cheerThreshold` 한 곳으로 모아 FSM·메뉴가 공유한다.
+
+### 재발 방지
+- **이 앱에서 전역 입력 감지가 필요하면 권한 필요 API 를 1순위로 쓰지 않는다.** `NSEvent` 전역 모니터·
+  `CGEventTap`·`IOHIDCheckAccess` 는 TCC(손쉬운 사용/입력 모니터링)에 묶여 조용히 죽는다. 먼저
+  `CGEventSource.counterForEventType`·`secondsSinceLastEventType` 같은 **권한 불요 API 로 표현 가능한지**
+  검토한다(현재는 키 입력, 마우스 움직임, 유휴 시간 모두 이 계열로 커버 가능).
+- **ad-hoc 서명 빌드에서 TCC 권한에 의존하는 기능은 "다음 빌드에서 죽는다"를 전제로 설계한다.**
+  Developer ID 서명으로 배포하기 전까지 권한 유지가 필요한 기능은 채택하지 않는다.
+- 감지 기능을 붙일 때는 **살아 있는지 확인할 수 있는 상태 표시**(메뉴의 실시간 WPM/허용 상태)를 함께
+  붙인다. "조용히 미동작"이 이 계열 버그의 공통 증상이다.
+- 응원 *진입*은 FSM 상태 조건(`.idle/.walk/.sit/.lookAround/.wave`)에 걸리므로 진행 중인 자율 모션
+  (블록 캐기 3초, 먹기, 감정 표현 등)이 끝나야 이뤄진다 — "안 뜬다"를 판정할 때는 **몇 초 안에 들어오는지**를
+  30초 이상 지속 타이핑으로 샘플링해 데이터로 본다(최종 측정: 34샘플 중 32개 응원 유지, 진입 지연 최대 수 초).
+- 전역 카운터를 쓰는 코드는 **증가분을 소비하는 구조**라 호출 지점을 프레임 루프 한 곳으로 고정하고,
+  기준선(첫 호출)·클램프·래핑 처리를 빠뜨리지 않는다.
 
 ---
 

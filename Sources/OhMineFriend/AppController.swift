@@ -28,6 +28,9 @@ public final class AppController: NSObject, CharacterViewDelegate, PetViewDelega
 
     // Ladder descent (사다리 타고 창문 내려가기)
     var ladderMenuItem: NSMenuItem?
+
+    // Typing cheer (⌨️ 타이핑 응원 — 설정 메뉴의 실시간 WPM 상태 줄)
+    var typingStatusItem: NSMenuItem?
     private var ladderOverlay: LadderOverlayWindow?
 
     // Pet Companion (펫 동반자 시스템)
@@ -165,6 +168,9 @@ public final class AppController: NSObject, CharacterViewDelegate, PetViewDelega
         }
 
         let cursorPos = NSEvent.mouseLocation
+
+        // 타이핑 감지: 전역 keyDown 카운터 증가분을 적립(프레임당 정확히 1회)
+        TypingActivityMonitor.shared.poll(now: now)
 
         // 1. Behavior AI Decision
         behavior.update(
@@ -717,6 +723,18 @@ public final class AppController: NSObject, CharacterViewDelegate, PetViewDelega
     public func menuNeedsUpdate(_ menu: NSMenu) {
         attackMenuItem?.isEnabled = canStartTNTBreak()
         ladderMenuItem?.isEnabled = canStartLadderDescent()
+        // 감지가 살아 있는지 사용자가 바로 확인할 수 있게, 메뉴를 열 때마다 현재 WPM 으로 갱신
+        typingStatusItem?.title = typingStatusTitle()
+    }
+
+    /// 설정 메뉴의 타이핑 감지 상태 줄. 응원 기준(35 WPM)과 현재 속도를 함께 보여준다.
+    func typingStatusTitle() -> String {
+        guard TypingActivityMonitor.shared.isEnabled else { return "  ⌨️ 타이핑 응원 모드 꺼짐" }
+        let wpm = Int(TypingActivityMonitor.shared.currentWPM)
+        let threshold = Int(TypingActivityMonitor.cheerThreshold)
+        return wpm > 0
+            ? "  ⌨️ 지금 \(wpm) WPM 감지 중 (\(threshold) WPM 이상이면 응원)"
+            : "  ⌨️ 타이핑 대기 중 (\(threshold) WPM 이상이면 응원)"
     }
 
     func didToggleTotemFromMenu() {
@@ -1215,12 +1233,6 @@ public final class AppController: NSObject, CharacterViewDelegate, PetViewDelega
         TypingActivityMonitor.shared.isEnabled.toggle()
         sender.state = TypingActivityMonitor.shared.isEnabled ? .on : .off
         statusItem?.menu = buildContextMenu()
-    }
-
-    @objc func didSelectOpenAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
     }
 
     @objc func didSelectNag() {
@@ -3652,8 +3664,8 @@ public final class AppController: NSObject, CharacterViewDelegate, PetViewDelega
     }
 
     // MARK: - M3 Slime (슬라임 분열 몹)
+    // 소환은 수동(메뉴 "🟢 슬라임 소환")만 — 자동 출현 타이머는 두지 않는다.
     var slimeWindows: [SlimeWindow] = []
-    var slimeSpawnInterval: TimeInterval = 180.0
 
     // MARK: - H4 Day/Night (낮밤 사이클)
     private var dayNightTimer: TimeInterval = 0

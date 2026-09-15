@@ -540,15 +540,11 @@ struct MenuBuilder {
         typingCheerItem.state = TypingActivityMonitor.shared.isEnabled ? .on : .off
         settingsMenu.addItem(typingCheerItem)
 
-        if !TypingActivityMonitor.shared.isAccessibilityTrusted {
-            let permItem = NSMenuItem(
-                title: "  ℹ️ 타 앱 타이핑 감지: 손쉬운 사용 권한 필요",
-                action: #selector(AppController.didSelectOpenAccessibilitySettings),
-                keyEquivalent: ""
-            )
-            permItem.target = app
-            settingsMenu.addItem(permItem)
-        }
+        // 타이핑 감지 상태 줄 — 메뉴를 열 때마다 AppController.menuNeedsUpdate 가 현재 WPM 으로 갱신한다
+        let typingStatusItem = NSMenuItem(title: app.typingStatusTitle(), action: nil, keyEquivalent: "")
+        typingStatusItem.isEnabled = false
+        app.typingStatusItem = typingStatusItem
+        settingsMenu.addItem(typingStatusItem)
 
         // Notification Nag Toggle
         let nagToggleItem = NSMenuItem(
