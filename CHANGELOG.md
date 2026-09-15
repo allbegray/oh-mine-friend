@@ -7,6 +7,21 @@
 
 ## [Unreleased]
 
+## [v0.42.0] - 2026-09-15
+
+### 변경
+- 🟢 **슬라임을 수동 소환 전용으로 전환**: 3분(180초)마다 큰 슬라임이 저절로 나타나던 앰비언트 스폰(`MobDirector` 의 `slimeSpawnTimer` + `AppController.slimeSpawnInterval`)을 제거했다. 이제 슬라임은 메뉴 `✨ 재미있는 모션 실행 → 👾 몹 소환 → 🟢 슬라임 소환` 으로만 등장한다 — 분열로 태어나는 중·소형과, 나타난 슬라임에게 검을 뽑아 돌격하는 근접 전투 AI 는 그대로다.
+  - 검증: 전 소스에서 `spawnSlime(` 호출 지점이 수동 메뉴 액션·분열 콜백 두 곳만 남음을 확인. 새 빌드를 실행해 **400초**(기존 자동 주기 180초를 크게 초과) 관찰하는 동안 슬라임 크기 창(96/64/40pt) **0개**, 메뉴로 수동 소환하면 96pt 슬라임 창이 즉시 생성됨을 확인.
+
+### 수정
+- ⌨️ **타이핑 응원이 아무리 쳐도 동작하지 않던 문제**: 감지를 손쉬운 사용 권한이 필요한 `NSEvent.addGlobalMonitorForEvents(.keyDown)` 로 하고 있었다. 실행 중인 앱의 상태 메뉴를 접근성 API 로 읽어 **권한이 없는 상태**(`⚠️ 타 앱 타이핑 감지 허용하기`)임을 확인했고, 권한이 없으면 키 이벤트가 **에러도 크래시도 없이 조용히 오지 않아** WPM 이 영원히 0 이었다. 게다가 배포본은 ad-hoc 서명이라 권한을 받아도 **재빌드마다 TCC 부여가 무효화**돼 다음 빌드에서 조용히 다시 죽는다. 권한이 필요 없는 **시스템 전역 keyDown 카운터(`CGEventSource.counterForEventType`) 폴링**으로 교체하고, 전역·로컬 모니터와 권한 요청 메뉴를 삭제했다.
+  - 게임 루프가 프레임마다 `TypingActivityMonitor.poll()` 을 한 번 호출해 증가분을 4초 슬라이딩 윈도우에 적립하고 `WPM = 타수 × (60/4) ÷ 5` 로 환산한다(첫 호출은 기준선만 · 프레임당 32타 클램프로 절전 복귀 스파이크 방어 · UInt32 래핑 감산 · 꺼져 있을 때도 기준선 갱신). 응원 기준 WPM 은 `TypingActivityMonitor.cheerThreshold` 한 곳으로 모았다.
+  - 설정 메뉴의 권한 안내 줄을 **실시간 상태 줄**(`⌨️ 지금 n WPM 감지 중 (35 WPM 이상이면 응원)` / `⌨️ 타이핑 대기 중`)로 교체해 감지가 살아 있는지 눈으로 확인할 수 있다.
+  - 검증: 실행 중 앱에서 **재현**(합성 키 40타 동안 세션 카운터 100725→100765, 상태는 "Dock에 걸터앉아 쉬는 중" 그대로) → 수정 빌드에서 `현재 상태: 코딩 신나게 응원 중! 🔥 (WPM: 60)` 확인. 30초 지속 타이핑(≈9.5타/초) 샘플 34개 중 32개 응원 유지(2개는 진입 전 자율 '먹기' 모션), 타이핑을 멈추면 4초 안에 `타이핑 대기 중` 으로 복귀. 실제 메뉴 클릭(AXPress)으로 OFF → `타이핑 응원 모드 꺼짐` + 응원 미발생, 다시 ON → 응원 재개까지 확인.
+
+### 빌드
+- 🔧 **CLT 환경에서 `swiftc` Fallback 빌드가 실패하던 문제**: Fallback 경로가 CLT `swiftc` + `Toolchains/.../host/plugins` 만 넘겼는데, `libSwiftUIMacros.dylib` 는 `Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins` 에만 있어 `plugin for module SwiftUIMacros not found`(연쇄 `self is immutable`·`$selectedTab not found`)로 Fallback 까지 실패했다. `DEVELOPER_DIR` → `xcode-select -p` → `/Applications/Xcode.app` 순으로 플러그인 실존을 확인해 풀 Xcode 툴체인을 골라내고(없으면 안내 후 즉시 종료), Xcode `swiftc` + 양쪽 `-plugin-path` + Xcode SDK 로 컴파일하도록 수정했다.
+
 ## [v0.41.1] - 2026-09-11
 
 ### 수정
