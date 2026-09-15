@@ -160,12 +160,12 @@ public final class EndermanNode: SCNNode {
         let armBox = SCNBox(width: 0.10, height: 1.35, length: 0.10, chamferRadius: 0)
         armBox.materials = [blackMat]
 
-        armLeftJoint.position = SCNVector3(-0.25, 0.35, 0)
+        armLeftJoint.position = SCNVector3(-0.28, 0.35, 0)
         let armLMesh = SCNNode(geometry: armBox)
         armLMesh.position = SCNVector3(0, -0.60, 0)
         armLeftJoint.addChildNode(armLMesh)
 
-        armRightJoint.position = SCNVector3(0.25, 0.35, 0)
+        armRightJoint.position = SCNVector3(0.28, 0.35, 0)
         let armRMesh = SCNNode(geometry: armBox)
         armRMesh.position = SCNVector3(0, -0.60, 0)
         armRightJoint.addChildNode(armRMesh)
@@ -186,13 +186,15 @@ public final class EndermanNode: SCNNode {
     }
 
     private func setupCarriedBlock() {
-        // Authentic Minecraft Grass Block held in hands (W=0.55, H=0.55, L=0.55)
-        let blockGeom = SCNBox(width: 0.55, height: 0.55, length: 0.55, chamferRadius: 0)
+        // Authentic Minecraft Grass Block held in hands (W=0.50, H=0.50, L=0.50)
+        let blockGeom = SCNBox(width: 0.50, height: 0.50, length: 0.50, chamferRadius: 0)
         // Materials: [Front, Right, Back, Left, Top, Bottom]
         blockGeom.materials = [dirtMat, dirtMat, dirtMat, dirtMat, grassTopMat, dirtMat]
         carriedBlockNode.geometry = blockGeom
-        // Positioned between long hands in front of chest
-        carriedBlockNode.position = SCNVector3(0, -0.10, 0.45)
+        // 손 높이(엉덩이 앞)에 매달려 있다 — 팔(관절 x ±0.28)이 상자 옆면을 잡는다.
+        // 상자를 가슴 앞·더 넓게(0.55) 두면 정면에서 팔이 상자에 완전히 가려졌다
+        // (왼팔 바깥 모서리 0.062 대 상자 끝 0.275 → 노출 0).
+        carriedBlockNode.position = SCNVector3(0, -0.82, 0.60)
     }
 
     // MARK: - Animation Loop
@@ -230,10 +232,12 @@ public final class EndermanNode: SCNNode {
         }
 
         // 3. Carrying Block Arm Posture
+        // 팔을 상자 *옆*에 세워 든다: 상자(x ±0.25)보다 바깥(x ±0.28)에 팔이 있어야
+        // 정면에서 팔이 보인다. 앞으로 크게 젖히면(-0.95) 손이 상자 앞·아래로 빠져
+        // 팔 몸통이 상자를 관통했다(중심선 46%가 상자 내부).
         if isCarryingBlock && !isEnraged {
-            // Hold hands forward carrying the grass block
-            armLeftJoint.eulerAngles = SCNVector3(-0.95, 0.25, 0)
-            armRightJoint.eulerAngles = SCNVector3(-0.95, -0.25, 0)
+            armLeftJoint.eulerAngles = SCNVector3(-0.45, 0, 0)
+            armRightJoint.eulerAngles = SCNVector3(-0.45, 0, 0)
         }
 
         // 4. Stride / Walking Animation
