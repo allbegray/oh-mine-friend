@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
-# 풀 Xcode가 있으면 그 툴체인 사용 (CLT에는 SwiftUIMacros 플러그인이 없어 갤러리 빌드 불가)
-if [ -z "$DEVELOPER_DIR" ] && [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+# 풀 Xcode 툴체인 사용 (CLT에는 SwiftUIMacros 플러그인이 없어 갤러리 빌드 불가)
+# DEVELOPER_DIR이 비었거나 매크로 플러그인 없는 CLT를 가리키면 /Applications/Xcode.app으로 교정한다.
+if [ ! -f "${DEVELOPER_DIR:-/nonexistent}/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ] && [ -f "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
     export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
 fi
 
@@ -20,21 +21,41 @@ RESOURCES_DIR="${APP_BUNDLE}/Contents/Resources"
 # Try swift build first, fallback to direct swiftc compilation if CommandLineTools SPM manifest fails
 if ! swift build -c release; then
     echo ""
-    echo "⚠️ 'swift build' encountered an environment/CommandLineTools manifest link issue."
-    echo "🔄 Switching to fallback: Compiling directly with swiftc..."
+    echo "⚠️ 'swift build' 실패 → swiftc 직접 컴파일로 전환합니다."
+    # SwiftUI @State 등은 매크로라 풀 Xcode의 플러그인(libSwiftUIMacros.dylib)이 필수다.
+    # CLT 툴체인에는 없어 fallback이 CLT swiftc를 쓰면
+    # 'plugin for module SwiftUIMacros not found' + 연쇄 'self is immutable' 에러가 난다.
+    # → Xcode swiftc + Xcode 매크로 플러그인 경로를 직접 지정한다.
+    if [ -z "${DEVELOPER_DIR:-}" ] && [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
+        export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+    fi
+    XCODE_DEV=""
+    for cand in "${DEVELOPER_DIR:-}" "$(xcode-select -p 2>/dev/null)" "/Applications/Xcode.app/Contents/Developer"; do
+        if [ -f "$cand/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib" ]; then
+            XCODE_DEV="$cand"
+            break
+        fi
+    done
+    if [ -z "$XCODE_DEV" ]; then
+        echo "❌ 풀 Xcode가 필요합니다: SwiftUI 매크로 플러그인(libSwiftUIMacros.dylib)을 찾을 수 없습니다."
+        echo "   App Store에서 Xcode를 설치한 뒤 다시 실행하세요. (CommandLineTools만으로는 빌드 불가)"
+        exit 1
+    fi
+    export DEVELOPER_DIR="$XCODE_DEV"
     ARCH="$(uname -m)"
     mkdir -p .build/module-cache
-    PLUGIN_FLAG=""
+    # libSwiftUIMacros.dylib는 Toolchains/.../host/plugins가 아니라
+    # Platforms/MacOSX.platform/.../host/plugins에 있다. 둘 다 넘긴다.
+    PLUGIN_FLAGS="-plugin-path $XCODE_DEV/Platforms/MacOSX.platform/Developer/usr/lib/swift/host/plugins"
+    if [ -d "$XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins" ]; then
+        PLUGIN_FLAGS="$PLUGIN_FLAGS -plugin-path $XCODE_DEV/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins"
+    fi
     SDK_FLAG=""
-    XCODE_PLUGINS="/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins"
-    XCODE_SDK="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
-    if [ -d "$XCODE_PLUGINS" ]; then
-        PLUGIN_FLAG="-plugin-path $XCODE_PLUGINS"
+    if [ -d "$XCODE_DEV/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk" ]; then
+        SDK_FLAG="-sdk $XCODE_DEV/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
     fi
-    if [ -d "$XCODE_SDK" ]; then
-        SDK_FLAG="-sdk $XCODE_SDK"
-    fi
-    swiftc -module-cache-path .build/module-cache $PLUGIN_FLAG $SDK_FLAG -O -target "${ARCH}-apple-macosx13.0" Sources/OhMineFriend/*.swift \
+    # shellcheck disable=SC2086 ($PLUGIN_FLAGS/$SDK_FLAG은 의도적 워드 스플리팅)
+    swiftc -module-cache-path .build/module-cache $PLUGIN_FLAGS $SDK_FLAG -O -target "${ARCH}-apple-macosx13.0" Sources/OhMineFriend/*.swift \
         -o ".build/release/${APP_NAME}" \
         -framework AppKit -framework SceneKit -framework SwiftUI -framework CoreGraphics
     echo "✅ Direct compilation succeeded!"
