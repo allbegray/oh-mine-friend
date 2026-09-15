@@ -4,6 +4,8 @@ import Foundation
 
 public enum EndermanState {
     case roaming(direction: CGFloat, walkTimer: TimeInterval)
+    /// 멈춰 서서 창 정면(카메라 = 사용자)을 빤히 응시한다 — 가끔 자발적으로.
+    case gazing(elapsed: TimeInterval, hold: TimeInterval)
     case staring(duration: TimeInterval)
     case enraged(chargeTimer: TimeInterval, teleportCooldown: TimeInterval)
     case hurt(knockbackVx: CGFloat, timer: TimeInterval)
@@ -34,6 +36,12 @@ public final class EndermanBehaviorController {
     private let roamSpeed: CGFloat = 45.0
     private let chargeSpeed: CGFloat = 175.0
     private var pumpkinConfusedCooldown: TimeInterval = 0
+
+    /// 정면 응시 주기 — 소환 직후 한 번은 짧게, 그 뒤로는 15~30초마다 멈춰 서서 빤히 본다.
+    private static let firstGazeDelay: ClosedRange<Double> = 6.0...12.0
+    private static let gazeInterval: ClosedRange<Double> = 15.0...30.0
+    private static let gazeHold: ClosedRange<Double> = 4.0...6.0
+    private var gazeCountdown: TimeInterval = Double.random(in: firstGazeDelay)
 
     public init() {}
 
@@ -66,6 +74,7 @@ public final class EndermanBehaviorController {
 
             endermanPhysics.position.x += dir * roamSpeed * dt
             pumpkinConfusedCooldown -= Double(dt)
+            gazeCountdown -= Double(dt)
 
             // Check eye contact with cursor!
             if isCursorHoveringHead && PumpkinWard.shared.isWorn {
@@ -82,6 +91,15 @@ public final class EndermanBehaviorController {
                 return
             }
 
+            // 가끔 걸음을 멈추고 창 정면을 빤히 응시한다(눈을 마주치면 위에서 분노로 빠진다).
+            if gazeCountdown <= 0 {
+                gazeCountdown = Double.random(in: Self.gazeInterval)
+                endermanNode.walkSpeed = 0
+                endermanNode.showOverheadEmoji("👁️ ....", duration: 1.4)
+                state = .gazing(elapsed: 0, hold: Double.random(in: Self.gazeHold))
+                return
+            }
+
             // Screen boundary turning
             if endermanPhysics.position.x <= screen.frame.minX + 40 && dir < 0 {
                 dir = 1.0
@@ -94,6 +112,30 @@ public final class EndermanBehaviorController {
                 dir = Bool.random() ? 1.0 : -1.0
             }
             state = .roaming(direction: dir, walkTimer: timer)
+
+        case .gazing(var elapsed, let hold):
+            elapsed += Double(dt)
+            endermanNode.walkSpeed = 0
+            endermanNode.isStaring = false
+            endermanNode.isEnraged = false
+            // 몸을 정면으로 돌려 카메라(=사용자)를 똑바로 본다. 배회 중에는 ±90°로 걷기 때문에
+            // 이 순간에만 눈이 정면을 향한다.
+            endermanNode.modelRoot.eulerAngles.y = 0
+
+            // 응시 중이라도 커서가 눈에 닿으면 원래 규칙대로 분노한다.
+            if isCursorHoveringHead {
+                endermanNode.isStaring = true
+                endermanNode.showOverheadEmoji("👁️ 쉬이익...!", duration: 1.8)
+                SoundAndEffectsManager.shared.play(.alert)
+                state = .staring(duration: 0)
+                return
+            }
+
+            if elapsed >= hold {
+                state = .roaming(direction: Bool.random() ? 1.0 : -1.0, walkTimer: Double.random(in: 2.5...5.0))
+            } else {
+                state = .gazing(elapsed: elapsed, hold: hold)
+            }
 
         case .staring(var duration):
             duration += Double(dt)
